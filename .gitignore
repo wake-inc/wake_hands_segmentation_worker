@@ -57,3 +57,4 @@ dist/
 # Repository-managed model weights are versioned with Git LFS.
 !/weights/
 !/weights/**
+/weights/.DS_Store
