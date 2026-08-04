@@ -10,7 +10,7 @@ from timm.models.layers import trunc_normal_
 from mmseg.registry import MODELS
 from mmseg.utils import (ConfigType, OptConfigType, OptMultiConfig,
                          OptSampleList, SampleList, add_prefix)
-from .base import BaseSegmentor
+from mmseg.models.segmentors.base import BaseSegmentor
 import torch
 from mmengine.optim import OptimWrapper
 from mmengine.utils import is_list_of
@@ -19,7 +19,7 @@ import copy
 from collections import OrderedDict
 from mmseg.structures import SegDataSample
 from mmengine.structures import PixelData
-from ..utils import resize
+from mmseg.models.utils import resize
 from mmengine.runner import CheckpointLoader
 
 import numpy as np
@@ -203,51 +203,21 @@ class CaregoSegmentor(BaseSegmentor):
 
     def _forward(self,
                  inputs: Tensor,
-                 data_samples: OptSampleList = None,
-                 mode='tensor') -> Tensor:
-      
-        if mode== 'tensor': # return: tensor / tuple
-            pass
-        elif mode=='predict': # return list
-            self.predict(input, data_samples)
-        elif mode=='loss': # return dict of losses
-            self.loss(inputs, data_samples)
+                 data_samples: OptSampleList = None) -> Tensor:
+        if data_samples is not None:
+            batch_img_metas = [sample.metainfo for sample in data_samples]
+        else:
+            batch_img_metas = [
+                dict(ori_shape=inputs.shape[2:], img_shape=inputs.shape[2:])
+                for _ in range(inputs.shape[0])
+            ]
+        return self.inference(inputs, batch_img_metas)
 
     def slide_inference(self, inputs: Tensor,
                         batch_img_metas: List[dict]) -> Tensor:
-
-
-        h_stride, w_stride = self.test_cfg.stride
-        h_crop, w_crop = self.test_cfg.crop_size
-        batch_size, _, h_img, w_img = inputs.size()
-        out_channels = self.out_channels
-        h_grids = max(h_img - h_crop + h_stride - 1, 0) // h_stride + 1
-        w_grids = max(w_img - w_crop + w_stride - 1, 0) // w_stride + 1
-        preds = inputs.new_zeros((batch_size, out_channels, h_img, w_img))
-        count_mat = inputs.new_zeros((batch_size, 1, h_img, w_img))
-        for h_idx in range(h_grids):
-            for w_idx in range(w_grids):
-                y1 = h_idx * h_stride
-                x1 = w_idx * w_stride
-                y2 = min(y1 + h_crop, h_img)
-                x2 = min(x1 + w_crop, w_img)
-                y1 = max(y2 - h_crop, 0)
-                x1 = max(x2 - w_crop, 0)
-                crop_img = inputs[:, :, y1:y2, x1:x2]
-                # change the image shape to patch shape
-                batch_img_metas[0]['img_shape'] = crop_img.shape[2:]
-                # the output of encode_decode is seg logits tensor map
-                # with shape [N, C, H, W]
-                crop_seg_logit = self.encode_decode(crop_img, batch_img_metas)
-                preds += F.pad(crop_seg_logit,
-                               (int(x1), int(preds.shape[3] - x2), int(y1),
-                                int(preds.shape[2] - y2)))
-
-                count_mat[:, :, y1:y2, x1:x2] += 1
-        assert (count_mat == 0).sum() == 0
-        seg_logits = preds / count_mat
-
-        return seg_logits
+        raise NotImplementedError(
+            "Sliding-window inference is unsupported for CaRe-Ego's four output heads"
+        )
 
     def whole_inference(self, inputs: Tensor,
                         batch_img_metas: List[dict]) -> Tensor:
@@ -275,23 +245,7 @@ class CaregoSegmentor(BaseSegmentor):
         return seg_logit
 
     def aug_test(self, inputs, batch_img_metas, rescale=True):
-        """Test with augmentations.
-
-        Only rescale=True is supported.
-        """
-        # aug_test rescale all imgs back to ori_shape for now
-        assert rescale
-        # to save memory, we get augmented seg logit inplace
-        seg_logit = self.inference(inputs[0], batch_img_metas[0], rescale)
-        for i in range(1, len(inputs)):
-            cur_seg_logit = self.inference(inputs[i], batch_img_metas[i],
-                                           rescale)
-            seg_logit += cur_seg_logit
-        seg_logit /= len(inputs)
-        seg_pred = seg_logit.argmax(dim=1)
-        # unravel batch dim
-        seg_pred = list(seg_pred)
-        return seg_pred
+        raise NotImplementedError("Augmented inference is unsupported for CaRe-Ego")
     
     def train_step(self, data: Union[dict, tuple, list],
                    optim_wrapper: OptimWrapper) -> Dict[str, torch.Tensor]:
@@ -342,7 +296,12 @@ class CaregoSegmentor(BaseSegmentor):
                 raise TypeError('Output of `data_preprocessor` in val should be '
                                 f'list, tuple or dict, but got {type(data)}')
         elif mode=='tensor':
-            pass
+            if isinstance(data, dict):
+                results = self._forward(**data)
+            elif isinstance(data, (list, tuple)):
+                results = self._forward(*data)
+            else:
+                raise TypeError(f'Expected list, tuple or dict, but got {type(data)}')
         return results
     
     def parse_losses(
@@ -420,40 +379,40 @@ class CaregoSegmentor(BaseSegmentor):
                     flip_direction = img_meta.get('flip_direction', None)
                     assert flip_direction in ['horizontal', 'vertical']
                     if flip_direction == 'horizontal':
-                        i_seg_logits_hand = i_seg_logits_hand.flip(dims=(3,1))
-                        i_seg_logits_left_obj = i_seg_logits_left_obj.flip(dims=(3,1))
-                        i_seg_logits_right_obj = i_seg_logits_right_obj.flip(dims=(3,1))
-                        i_seg_logits_cb = i_seg_logits_cb.flip(dims=(3,1))
+                        i_seg_logits_hand = i_seg_logits_hand.flip(dims=(3,))
+                        i_seg_logits_left_obj = i_seg_logits_left_obj.flip(dims=(3,))
+                        i_seg_logits_right_obj = i_seg_logits_right_obj.flip(dims=(3,))
+                        i_seg_logits_cb = i_seg_logits_cb.flip(dims=(3,))
                     else:
-                        i_seg_logits_hand = i_seg_logits_hand.flip(dims=(2,1))
-                        i_seg_logits_left_obj = i_seg_logits_left_obj.flip(dims=(2,1))
-                        i_seg_logits_right_obj = i_seg_logits_right_obj.flip(dims=(3,1))
-                        i_seg_logits_cb = i_seg_logits_cb.flip(dims=(2,1))
+                        i_seg_logits_hand = i_seg_logits_hand.flip(dims=(2,))
+                        i_seg_logits_left_obj = i_seg_logits_left_obj.flip(dims=(2,))
+                        i_seg_logits_right_obj = i_seg_logits_right_obj.flip(dims=(2,))
+                        i_seg_logits_cb = i_seg_logits_cb.flip(dims=(2,))
                 # resize as original shape
                 i_seg_logits_hand = resize(
                     i_seg_logits_hand,
                     # size=img_meta['ori_shape'],
-                    size=img_meta['img_shape'],
+                    size=img_meta['ori_shape'],
                     mode='bilinear',
                     align_corners=self.align_corners1,
                     warning=False).squeeze(0)
                 i_seg_logits_left_obj = resize(
                     i_seg_logits_left_obj,
                     # size=img_meta['ori_shape'],
-                    size=img_meta['img_shape'],
+                    size=img_meta['ori_shape'],
                     mode='bilinear',
                     align_corners=self.align_corners2,
                     warning=False).squeeze(0)
                 i_seg_logits_right_obj = resize(
                     i_seg_logits_right_obj,
                     # size=img_meta['ori_shape'],
-                    size=img_meta['img_shape'],
+                    size=img_meta['ori_shape'],
                     mode='bilinear',
                     align_corners=self.align_corners4,
                     warning=False).squeeze(0)
                 i_seg_logits_cb = resize(
                     i_seg_logits_cb,
-                    size=img_meta['img_shape'],
+                    size=img_meta['ori_shape'],
                     mode='bilinear',
                     align_corners=self.align_corners3,
                     warning=False).squeeze(0)
@@ -487,18 +446,15 @@ class CaregoSegmentor(BaseSegmentor):
             if C_cb > 1:
                 i_seg_pred_cb = i_seg_logits_cb.argmax(dim=0, keepdim=True)
             else:          
-                i_seg_logits_cb = i_seg_logits_cb.sigmod()
+                i_seg_logits_cb = i_seg_logits_cb.sigmoid()
                 i_seg_pred_cb = (i_seg_logits_cb >
                                  self.decode_head3.threshold).to(i_seg_logits_cb)
         
 
             # ----------------add two obj prediction
-            i_seg_pred_two_obj = np.zeros(i_seg_pred_left_obj.shape)
-            plus = i_seg_pred_left_obj + i_seg_pred_right_obj
-            mask = (plus>1).cpu().numpy()
-            i_seg_pred_two_obj[mask] = 1
-            i_seg_pred_two_obj = i_seg_pred_two_obj.astype(np.uint8)
-            i_seg_pred_two_obj = torch.from_numpy((i_seg_pred_two_obj).astype(np.uint8)).to(i_seg_logits_left_obj)
+            i_seg_pred_two_obj = (
+                (i_seg_pred_left_obj + i_seg_pred_right_obj) > 1
+            ).to(i_seg_logits_left_obj)
 
 
             data_samples[i].set_data({

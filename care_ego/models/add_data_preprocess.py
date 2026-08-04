@@ -4,7 +4,7 @@
 """
 from numbers import Number
 from typing import Any, Dict, List, Optional, Sequence, Union
-from ..utils.typing_utils import SampleList
+from mmseg.utils.typing_utils import SampleList
 
 import torch
 from mmengine.model import BaseDataPreprocessor

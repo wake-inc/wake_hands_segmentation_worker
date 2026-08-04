@@ -1,0 +1,59 @@
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python bytecode and environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.python-version
+
+# Test, type-checker, lint, and coverage caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+
+# Logs and local runtime state
+*.log
+*.pid
+.env
+.env.*
+!.env.example
+
+# Model and accelerator artifacts
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.safetensors
+
+# Local media, datasets, and generated inference output
+*.mp4
+*.mov
+*.avi
+/data/
+/datasets/
+/outputs/
+/results/
+/.segmentation-refinement/
+/model-cache/
+
+# Repository-managed model weights are versioned with Git LFS.
+!/weights/
+!/weights/**

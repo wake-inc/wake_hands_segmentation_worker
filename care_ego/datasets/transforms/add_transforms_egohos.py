@@ -59,7 +59,6 @@ class LoadThreennotations(MMCV_LoadAnnotations):
         Returns:
             dict: The dict contains loaded semantic segmentation annotations.
         """
-        print(results)
         img_bytes = fileio.get(
             results['seg_map_path'], backend_args=self.backend_args)
         img_bytes_hand = fileio.get(results['seg_map_path_hand'], backend_args=self.backend_args)
@@ -1391,4 +1390,3 @@ class MultiLabelResize(BaseTransform):
         repr_str += f'interpolation={self.interpolation})'
         return repr_str
     
-

@@ -5,9 +5,9 @@ from einops import rearrange
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from mmseg.registry import MODELS
 from mmcv.cnn import ConvModule
-from ..utils import resize
-from .decode_head import BaseDecodeHead
-from .psp_head import PPM
+from mmseg.models.decode_heads.decode_head import BaseDecodeHead
+from mmseg.models.decode_heads.psp_head import PPM
+from mmseg.models.utils import resize
 import warnings
 from abc import ABCMeta, abstractmethod
 from typing import List, Tuple
@@ -15,8 +15,8 @@ from mmengine.model import BaseModule
 from torch import Tensor
 from mmseg.structures import build_pixel_sampler
 from mmseg.utils import ConfigType, SampleList
-from ..builder import build_loss
-from ..losses import accuracy
+from mmseg.models.builder import build_loss
+from mmseg.models.losses import accuracy
 
 from mmengine.runner import CheckpointLoader
 from collections import OrderedDict
@@ -59,9 +59,6 @@ class CaregoDecoder(BaseDecodeHead):
                  use_checkpoint=False, final_upsample="expand_first", align_corners=False,pretrained='',type_decode='',**kwargs):
         super().__init__(num_classes=num_classes,in_channels=in_chans,**kwargs)
 
-        print("SwinTransformerSys expand initial----depths:{};depths_decoder:{};drop_path_rate:{};num_classes:{}".format(depths,
-        depths_decoder,drop_path_rate,num_classes))
-        
         self.type_Decoder = type_decode
 
         self.align_corners = align_corners
@@ -117,7 +114,6 @@ class CaregoDecoder(BaseDecodeHead):
         self.norm_up= norm_layer(self.embed_dim)
 
         if self.final_upsample == "expand_first":
-            print("---final upsample expand_first---")
             # self.up = FinalPatchExpand_X4(input_resolution=(img_size//patch_size,img_size//patch_size),dim_scale=4,dim=embed_dim)
             self.up = FinalPatchExpand_X4(input_resolution=(img_size[0]//patch_size,img_size[1]//patch_size),dim_scale=4,dim=embed_dim)
             self.output = nn.Conv2d(in_channels=embed_dim,out_channels=self.num_classes,kernel_size=1,bias=False)

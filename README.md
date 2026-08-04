@@ -1,201 +1,381 @@
-# CaRe-Ego
-[CaRe-Ego: Contact-aware Relationship Modeling for Egocentric Interactive Hand-object Segmentation](https://arxiv.org/abs/2407.05576)
+# WAKE AI Hands Segmentation Worker GPU
 
-Yuejiao Su, Yi Wang, and Lap-Pui Chau
+Contact-aware Relationship Modeling for Egocentric Interactive Hand-object
+Segmentation, based on the upstream CaRe-Ego
+[paper](https://arxiv.org/abs/2407.05576) and
+[project page](https://yuggiehk.github.io/CaRe-Ego/).
 
-[![](https://raw.githubusercontent.com/yuggiehk/CaRe-Ego/d35a2d3d306f7297090a80c52d48f9f655b23c7f/assets/arxiv.svg)](https://arxiv.org/abs/2407.05576)
-[![](https://raw.githubusercontent.com/yuggiehk/CaRe-Ego/d35a2d3d306f7297090a80c52d48f9f655b23c7f/assets/projectpage.svg)](https://yuggiehk.github.io/CaRe-Ego/)
+This repository is packaged for direct use. Custom modules no longer need to
+be copied into an MMSegmentation checkout. Model, data, optimizer, and runtime
+configuration live in [`care_ego/config.py`](care_ego/config.py); dependency
+resolution is captured by `uv.lock`.
 
+Detailed documentation:
 
+- [Universal result format](docs/result-format.md)
+- [Service workflow](docs/workflow.md)
+- [Request configuration and service chaining](docs/request-configuration.md)
 
-## Abstract
-Egocentric Interactive hand-object segmentation (EgoIHOS) requires segmenting hands and interacting objects in egocentric images, which is crucial for understanding human behaviors in assistive systems. Current methods often overlook the essential interactive relationships between hands and objects, or merely establish coarse hand-object associations to recognize targets, leading to suboptimal accuracy. To address this issue, we propose a novel CaRe-Ego method that achieves state-of-the-art performance by emphasizing contact between hands and objects from two aspects. First, to explicitly model hand-object interactive relationships, we introduce a Hand-guided Object Feature Enhancer (HOFE), which utilizes hand features as prior knowledge to extract more contact-relevant and distinguishing object features. Second, to promote the network concentrating on hand-object interactions, we design a Contact-Centric Object Decoupling Strategy (CODS) to reduce interference during training by disentangling the overlapping attributes of the segmentation targets, allowing the model to capture specific contact-aware features associated with each hand. Experiments on various in-domain and out-of-domain test sets show that Care-Ego significantly outperforms existing methods while exhibiting robust generalization capability.
+## Install
 
-## Method
-<div align="center">
-    <img src="https://github.com/yuggiehk/CaRe-Ego/blob/main/imgs/fig_2.png?raw=true" alt="My Image"/>
-</div>
+Install [Git LFS](https://git-lfs.com/) and
+[uv](https://docs.astral.sh/uv/), then initialize LFS and create the locked
+environment:
 
-## Video Demonstrations
-Although the CaRe-Ego is performed on Egocentric images, we can validate it on **out-of-distribution videos** frame-by-frame. We validate the effectiveness of CaRe-Ego on several out-of-distribution videos from the [THU-READ dataset](https://ivg.au.tsinghua.edu.cn/dataset/THU_READ.php).
-
-<div align="center">
-    <img src="https://github.com/yuggiehk/CaRe-Ego/blob/main/imgs/video1.gif" alt="My Image" />
-</div>
-
-<div align="center">
-    <img src="https://github.com/yuggiehk/CaRe-Ego/blob/main/imgs/video2.gif" alt="My Image" />
-</div>
-
-<div align="center">
-    <img src="https://github.com/yuggiehk/CaRe-Ego/blob/main/imgs/video3.gif" alt="My Image" />
-</div>
-
-<div align="center">
-    <img src="https://github.com/yuggiehk/CaRe-Ego/blob/main/imgs/video4.gif" alt="My Image" />
-</div>
-
-## Qualitative Results
-Comparison results on the EgoHOS **in-domain test set**.
-<div align="center">
-    <img src="https://github.com/yuggiehk/CaRe-Ego/blob/main/imgs/1.png" style="max-width: 100%; height: auto;">
-</div>
-
-Comparison results on the EgoHOS **out-of-domain test set** (left) and **out-of-distribution mini-HOI4D dataset** (right). The mini-HOI4D dataset is derived from the [HOI4D dataset](https://hoi4d.github.io/). You can download mini-HOI4D [here](https://drive.google.com/file/d/19byWlLpmm_TrwABlFcbUlQlwlbUX-CZc/view?usp=drive_link).
-<div align="center">
-    <img src="https://github.com/yuggiehk/CaRe-Ego/blob/main/imgs/51.png?raw=true" style="max-width: 100%; height: auto;">
-</div>
-
-
-## Setup
-
-### Dataset preparation
-
-The training data is from the [EgoHOS](https://github.com/owenzlz/EgoHOS) dataset. The test dataset consists of two types: the EgoHOS dataset and the mini-HOI4D dataset. You can download these two datasets through this [link](https://drive.google.com/file/d/19A47SlqjOLw7lJJLhTxWuehXfWrAt9Sw/view?usp=drive_link).
-The mini-HOI4D dataset is also uploaded to Huggingface. You can find it [here](https://huggingface.co/datasets/yuki3585/mini-HOI4D).
-
-After downloading and unzipping the file, the structure of the data folder should be organized as follows,
-```
-- train
-	|- image
-	|- label
-	|- label_hand
-	|- lbl_obj_left
-	|- lbl_obj_right
-	|- lbl_obj_two
-	|- label_contact_first
-- test_indomain
-	|- image
-	|- label
-	|- label_hand
-	|- lbl_obj_left
-	|- lbl_obj_right
-	|- lbl_obj_two
-	|- label_contact_first
-- test_outdomain
-	|- image
-	|- label
-	|- label_hand
-	|- lbl_obj_left
-	|- lbl_obj_right
-	|- lbl_obj_two
-	|- label_contact_first
-- minihoi4d
-	|- image
-	|- label
-	|- label_hand
-	|- lbl_obj_left
-	|- lbl_obj_right
-	|- lbl_obj_two
-	|- label_contact_first
-```
-### Setup
-
-Create the environment by:
-```
-conda env create -f mmseg.yml
-conda activate mmseg
-```
-Install the MMSegmentation framework first using their [guidance](https://github.com/open-mmlab/mmsegmentation).
-```
-git clone -b main https://github.com/open-mmlab/mmsegmentation.git
-cd mmsegmentation
-pip install -v -e .
+```bash
+git lfs install
+git lfs pull
+uv sync --frozen
 ```
 
-Download this repo:
-```
-cd ..
-git clone https://github.com/yuggiehk/CaRe-Ego.git
-```
-Then copy each file in Care-Ego to the corresponding mmsegmentation folder (file in CaRe-Ego            --->   MMsegmentation folder):
-```
-CaRe-Ego/configs/CaRego.py  --->  mmsegmentation/configs/
-```
-```
-CaRe-Ego/datasets/EgoHOS_with_ORD.py ---> mmsegmentation/mmseg/datasets/
+The runtime weights are versioned with Git LFS under `weights/` and are
+included automatically in a normal clone when Git LFS is installed. Run
+`git lfs pull` after cloning if the files are still LFS pointer files:
 
-# add following command in mmsegmentation/mmseg/datasets/__init__.py
-from .EgoHOS_with_ORD import SeperateObjectEgohos
-```
-```
-CaRe-Ego/models/add_data_preprocess.py —> mmsegmentation/mmseg/models/
-
-# add following command in mmsegmentation/mmseg/models/__init__.py
-from .add_data_preprocess import SeperateTwoObjDataPreProcessor
-```
-```
-CaRe-Ego/models/segmentors/segmentor.py —> mmsegmentation/mmseg/models/segmentors/
-
-# add following command in mmsegmentation/mmseg/models/segmentors/__init__.py
-from .segmentor import CaregoSegmentor
-```
-```
-CaRe-Ego/models/decoder_heads/add_Unet_decoder_output.py ---> mmsegmentation/mmseg/models/decode_heads/
-CaRe-Ego/models/decoder_heads/add_Unet_decoder_input.py ---> mmsegmentation/mmseg/models/decode_heads/
-CaRe-Ego/models/decoder_heads/add_Unet_decoder_with_seperate_heads_obj.py ---> mmsegmentation/mmseg/models/decode_heads/
-
-# add following command in mmsegmentation/mmseg/models/decode_heads/__init__.py
-from .add_Unet_deocder_output import CaregoDecoder
-from .add_unet_deocder_input import CaregoDecoder2
-from .add_Unet_decoder_with_seperate_heads_obj import CaregoDecoder3
-```
-```
-CaRe-Ego/datasets/transforms/add_transform_with_ORD.py
---> mmsegmentation/mmseg/datasets/transforms/
-CaRe-Ego/datasets/transforms/add_transforms_egohos.py --->
-mmsegmentation/mmseg/datasets/transforms/
-
-# add following command in mmsegmentation/mmseg/datasets/transforms/__init__.py
-from .add_transforms_egohos import LoadMultiLabelImageFromFile
-from .add_transform_with_ORD import LoadSeperateTwoObjAnnotation, LabelResizeSeperateTwoObj,RandomSeperateObjectCrop,PackSeperateTwoObjLabelSegInputs, ThreeLabelResizeSeperateTwoobj
-```
-```
-CaRe-Ego/metrics/add_new_seperate_iou.py ---> mmsegmentation/mmseg/evaluation/metrics/add_new_seperate_iou.py
-# add following command in mmsegmentation/mmseg/evaluation/metrics/__init__.py
-from .add_new_seperate_iou import NewSeperateIou
-```
-Then run:
-```
-python setup.py install
+```text
+wake_hands_segmentation_worker/
+└── weights/
+    ├── care_ego_best_miou_weights.pth
+    ├── care_ego_best_miou_mmengine_checkpoint.pth
+    ├── cascadepsp_v1_0.pth
+    └── upstream_pretraining_checkpoint.pth
 ```
 
-Download the pretrained model [here](https://drive.google.com/file/d/1e8Te2B_iPB-2tDP445J_MDaMaEcuU0uP/view?usp=drive_link). And replace the 'pretrained' in 'model' in CaRego.py config file with this path.
+The service discovers the first-stage and CascadePSP checkpoint locations
+automatically. `WAKE_CHECKPOINT_PATH` and `WAKE_CASCADEPSP_MODEL_DIR` remain
+available for deployments that mount weights elsewhere.
 
-### Training
-Replace the dataset root in the config file with your own path, and then you can train our model.
+The default lock uses `mmcv-lite`, which is sufficient for inference on macOS,
+Linux, and Windows. Training losses that call MMCV native operators require a
+platform-appropriate full MMCV build.
 
-If you use one GPU, run:
-```
-python tools/train.py configs/CaRego.py 
-```
-If you use multiple GPUs, run:
-```
-# bash tools/dist_train.sh  config_file number_of_gpus
-bash tools/dist_train.sh  configs/CaRego.py 4
-```
-### Inference
-We save our best ckpt in mIoU [Goodle drive](https://drive.google.com/file/d/1F8QyhSeHaJfS7QLRfMKdgTVKa69JRp-i/view?usp=drive_link) and [Hugginface](https://huggingface.co/yuki3585/CareEgo).
+## Python API
 
+Validate a checkpoint before loading it:
 
-Download the best ckpt, and perform:
-```
-# for one GPU
-# python tools/test.py config_file checkpoint_path 
-python tools/test.py configs/CaRego.py ./best_mIoU_ckpt.pth
-```
-## Acknowledgements
-The research work was conducted in the JC STEM Lab of Machine Learning and Computer Vision funded by The Hong Kong Jockey Club Charities Trust.
+```python
+from care_ego.inference import checkpoint_compatibility
 
-The code of the CaRe-Ego is built upon the [MMsegmentation](https://github.com/open-mmlab/mmsegmentation) codebase, thanks for their work.
+report = checkpoint_compatibility("weights/care_ego_best_miou_weights.pth")
+assert report["strictly_compatible"]
+```
+
+A compatible released checkpoint has 1,779 matching keys with no missing,
+unexpected, or shape-mismatched tensors.
+
+Run image inference:
+
+```python
+import cv2
+
+from care_ego.inference import load_model, predict, visualize
+
+model = load_model("weights/care_ego_best_miou_weights.pth")
+image = cv2.imread("input.jpg")
+prediction = predict(model, image)
+overlay = visualize(image, prediction)
+cv2.imwrite("output.jpg", overlay)
+```
+
+This direct image API returns the first-stage CaRe-Ego prediction. The video
+service runs CascadePSP as its second stage before converting masks to geometry.
+
+`prediction.raw_contact` exposes the released auxiliary contact head. Its loss
+is disabled by the original segmentor implementation, so visualizations use
+`prediction.derived_contact`, the local interface between predicted hand and
+object boundaries.
+
+## Producer-consumer service
+
+`SegmentationService` is an API-only, single-GPU worker. It loads the model
+once, waits on a request queue, decodes each requested video on a producer
+thread, and consumes frames in the largest configured batch that fits GPU
+memory. A persistent CascadePSP model refines the predicted masks before
+polygon conversion. Geometry conversion runs concurrently on CPU workers so
+the next GPU batch can start immediately.
+
+```mermaid
+flowchart LR
+    R[Request queue] --> D[file:// download]
+    D --> P[Frame producer]
+    P --> Q[In-memory frame queue]
+    Q --> G[Adaptive GPU batch consumer]
+    G --> F[GPU CascadePSP refinement]
+    F --> C[CPU Shapely worker pool]
+    C --> J[Atomic JSON output]
+```
+
+```python
+from pathlib import Path
+
+from care_ego.service import SegmentationService, WorkerConfig
+
+checkpoint = Path("weights/care_ego_best_miou_weights.pth")
+video = Path("input.mp4").resolve()
+output = Path("outputs").resolve()
+
+with SegmentationService(
+    checkpoint,
+    config=WorkerConfig(batch_sizes=(128, 64, 32, 16, 8, 4, 2, 1)),
+) as service:
+    future = service.submit(
+        {
+            "request_id": "example-job",
+            "video_uri": video.as_uri(),
+            "output_uri": output.as_uri(),
+            "simplify_tolerance": 2.0,
+            "min_area": 64,
+            "refinement_mode": "low",
+            "config": {
+                "pipeline": {"trace_id": "pipeline-42", "step": 1},
+                "delivery": {"enabled": False},
+            },
+        }
+    )
+    result = future.result()
+    print(result.output_path, result.batch_size)
+```
+
+For now, `video_uri` and `output_uri` must use `file://`; the output URI names
+a directory. Each request produces `<request_id>.json` using the versioned,
+architecture-neutral `wake-ai/inference-result` schema. Frame indexes are
+integers in memory and strings after JSON serialization.
+
+Requests may override batching, precision, refinement, geometry, input limits,
+and retry policy through a namespaced `config` object. Optional downstream
+delivery can POST the completed universal document or its `file://` reference
+to another service. See
+[Request configuration and service chaining](docs/request-configuration.md).
+
+The hand worker stores its frame-indexed geometry in
+`outputs[0].items`. A shortened result looks like this:
+
+```json
+{
+  "schema": {"name": "wake-ai/inference-result", "version": "1.0.0"},
+  "request": {
+    "id": "job-001",
+    "config": {
+      "refinement": {"mode": "low"},
+      "delivery": {"enabled": false}
+    }
+  },
+  "created_at": "2026-08-02T14:00:00+00:00",
+  "model": {
+    "id": "care-ego-cascadepsp",
+    "families": ["cnn", "transformer"],
+    "framework": "pytorch"
+  },
+  "inputs": [
+    {
+      "id": "video",
+      "modality": "video",
+      "source": {"type": "uri", "value": "file:///data/input.mp4"}
+    }
+  ],
+  "outputs": [
+    {
+      "id": "frame_predictions",
+      "modality": "vision",
+      "unit": "frame",
+      "coordinate_system": {"type": "pixel", "origin": "top_left"},
+      "items": {
+        "0": [
+          {
+            "id": "frame_predictions:0:0",
+            "task": "semantic_segmentation",
+            "source_id": "cascadepsp",
+            "track_id": 1,
+            "label": "left_hand",
+            "type": "polygon",
+            "value": [[120, 400], [132, 397], [120, 400]]
+          }
+        ]
+      }
+    }
+  ],
+  "runtime": {
+    "frame_count": 1,
+    "largest_batch_size": 1,
+    "refinement_mode": "low",
+    "effective_config": {
+      "inference": {"batch_sizes": [128, 64, 32, 16, 8, 4, 2, 1]},
+      "refinement": {"mode": "low"}
+    },
+    "delivery": {"enabled": false, "status": "disabled", "attempts": 0}
+  }
+}
+```
+
+Masks are converted to Shapely polygons and use
+[topology-preserving simplification](https://shapely.readthedocs.io/en/stable/reference/shapely.simplify.html).
+Bboxes contain two corner points; point annotations contain one `[x, y]`
+coordinate. Track IDs are stable semantic-role IDs for the left/right hand,
+left/right/shared object, and hand-object contact. They identify those roles
+across frames; they are not a general multi-instance object tracker.
+
+The envelope is not tied to segmentation or PyTorch. `model.families`, input
+modalities, output modalities, tasks, unit names, and prediction types are
+extensible strings. A CNN can emit classes or geometry; a VLM can accept image
+and text inputs; an LLM can emit `type: "text"`; and transformer workers can
+emit tokens, spans, embeddings, or structured JSON through the same prediction
+record. Every prediction has `id`, `task`, `type`, and `value`; optional common
+fields include `label`, `score`, `track_id`, `source_id`, `span`, and
+`attributes`. The canonical JSON Schema lives in
+[`care_ego/schema.py`](care_ego/schema.py) and is served by `GET /v1/schema`.
+
+## CascadePSP refinement
+
+The second stage uses the official
+[CascadePSP](https://github.com/hkchengrex/CascadePSP) implementation. It
+refines four binary semantic masks per frame—left/right hands and left/right
+objects—then reconstructs mutually exclusive hand labels, shared objects, and
+the derived contact boundary.
+
+- `low` is the throughput default and uses CascadePSP's global-only fast path
+  with `L=600`.
+- `medium` uses global plus local refinement with the official `L=900` default.
+
+Set the default with `WAKE_REFINEMENT_MODE`; a request can override it with
+`refinement_mode`. The expected local artifact is
+`weights/cascadepsp_v1_0.pth`. Git LFS supplies this artifact with the other
+repository weights, and every startup verifies its SHA-256 digest. Set
+`WAKE_CASCADEPSP_MODEL_DIR` to use another model directory.
+
+Performance defaults favor GPU throughput: CUDA convolution benchmarking and
+TF32 are enabled, CUDA inference uses automatic mixed precision, frame decode
+overlaps inference, geometry work is threaded, and first-stage batches are
+attempted from 128 down to 1 on out-of-memory failures. CascadePSP then refines
+four binary masks per frame with one persistent second-stage model.
+
+## Flask service
+
+The production server uses one Gunicorn process so the model is loaded into GPU
+memory only once. Eight HTTP threads can hold blocking or streaming sockets
+while the internal consumer serializes GPU work. Gunicorn has no active-request
+timeout and its master automatically replaces a crashed worker process.
+
+With the default project-root weight layout, start the server directly:
+
+```bash
+uv run --frozen gunicorn -c gunicorn.conf.py
+```
+
+The blocking endpoint keeps its socket open until the queued video finishes:
+
+```bash
+curl --no-buffer -X POST http://localhost:8080/v1/segment \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "request_id": "job-001",
+    "video_uri": "file:///data/input.mp4",
+    "output_uri": "file:///data/output",
+    "config": {
+      "refinement": {"mode": "low"},
+      "delivery": {"enabled": false}
+    }
+  }'
+```
+
+For infrastructure that closes silent connections, the SSE endpoint emits a
+heartbeat every 15 seconds and eventually a `result` event:
+
+```bash
+curl --no-buffer -X POST http://localhost:8080/v1/segment/stream \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "request_id": "job-001",
+    "video_uri": "file:///data/input.mp4",
+    "output_uri": "file:///data/output"
+  }'
+```
+
+Health endpoints are available at `/health/live` and `/health/ready`; the
+universal result contract is available at `/v1/schema`. Transient I/O and
+inference failures are retried three times with exponential backoff; individual
+request failures do not stop the persistent request consumer. Permanent input
+errors are rejected without pointless retries. The last 256 completed inference
+IDs are cached: an identical retry returns the original result (or required
+delivery failure) without another GPU pass, while conflicting reuse of an ID is
+rejected.
+
+For service chaining, enable `config.delivery` and provide the next service
+URL. Full-document and shared-file reference modes, authentication headers,
+idempotency, delivery-only retries, and required/best-effort behavior are
+documented in
+[Request configuration and service chaining](docs/request-configuration.md).
+
+## Docker GPU service
+
+The production image is Linux/x86-64 and uses the CUDA 12.1 dependencies
+selected by `uv.lock`. It embeds the CaRe-Ego inference checkpoint and
+CascadePSP checkpoint, so it needs no configuration or weight mount.
+
+```bash
+docker build --platform linux/amd64 \
+  --tag wake_hands_segmentation_worker:0.1.0 .
+
+docker run --detach \
+  --name wake_hands_segmentation_worker \
+  --restart unless-stopped \
+  --gpus all \
+  --publish 8080:8080 \
+  wake_hands_segmentation_worker:0.1.0
+```
+
+The host needs an NVIDIA driver and NVIDIA Container Toolkit configured for
+Docker. The image defaults to `WAKE_DEVICE=cuda`, runs as UID/GID 10001, uses
+Tini for signal forwarding, and reports readiness through its Docker health
+check. `--gpus all` and `--publish` grant host resources and therefore cannot be
+encoded in an image. If the Docker daemon already uses the NVIDIA runtime by
+default and the API is consumed from the container network, the literal command
+`docker run wake_hands_segmentation_worker:0.1.0` is sufficient.
+
+Input and output `file://` URIs still refer to the container filesystem. A data
+volume is optional and is needed only when a job must exchange persistent files
+with the host; it is not needed for model startup.
+
+For packaging tests on a machine without NVIDIA hardware, override the device:
+
+```bash
+docker run --rm --env WAKE_DEVICE=cpu \
+  wake_hands_segmentation_worker:0.1.0
+```
+
+See [Service workflow](docs/workflow.md#docker-deployment) for runtime and
+verification details.
+
+## Training configuration
+
+The MMSeg Python configuration is importable as `care_ego.config` and includes
+`custom_imports` for automatic registry setup. Set `data_root` and, when
+training from backbone initialization, `model["pretrained"]` in Python before
+launching an MMEngine runner.
+
+Dataset layout follows the original EgoHOS-derived structure:
+
+```text
+train/
+  image/
+  label/
+  label_hand/
+  lbl_obj_left/
+  lbl_obj_right/
+  lbl_obj_two/
+  label_contact_first/
+```
+
+`weights/upstream_pretraining_checkpoint.pth` is retained for possible future
+training work, but it is not a CaRe-Ego resume checkpoint. It contains 760
+`backbone`/`sem_seg_head` tensors and is not directly compatible with the
+1,779-key CaRe-Ego model. Keep `model["pretrained"] = None` unless a dedicated
+conversion/mapping is implemented and validated.
+
+`care_ego_best_miou_weights.pth` is the tensor-only, restricted-loader-safe
+inference artifact. `care_ego_best_miou_mmengine_checkpoint.pth` preserves the
+original MMEngine metadata for future training experiments; it contains the
+same 1,779 model tensors but no optimizer state.
 
 ## License
-Our code is distributed under the Apache-2.0 license. See the LICENSE.txt file for more information.
 
-
-
-
-
-
-
-
+Apache-2.0. See [`LICENSE.txt`](LICENSE.txt).

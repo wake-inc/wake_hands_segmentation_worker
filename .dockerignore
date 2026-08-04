@@ -1,0 +1,25 @@
+*
+
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE.txt
+!gunicorn.conf.py
+!care_ego/
+!care_ego/**
+!weights/
+
+**/__pycache__/
+*.py[cod]
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.safetensors
+
+# The runtime image is self-contained, but training checkpoints stay outside it.
+!weights/care_ego_best_miou_weights.pth
+!weights/cascadepsp_v1_0.pth
