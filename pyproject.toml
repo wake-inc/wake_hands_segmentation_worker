@@ -11,6 +11,7 @@ license = { file = "LICENSE.txt" }
 requires-python = ">=3.10,<3.13"
 authors = [{ name = "Yuejiao Su" }, { name = "Yi Wang" }, { name = "Lap-Pui Chau" }]
 dependencies = [
+  "boto3>=1.42,<2",
   "einops==0.8.1",
   "flask>=3.1,<4",
   "gunicorn>=23,<24",
@@ -38,6 +39,25 @@ Paper = "https://arxiv.org/abs/2407.05576"
 
 [tool.hatch.build.targets.wheel]
 packages = ["care_ego"]
+
+[tool.hatch.build.targets.sdist]
+# Model weights are Git LFS runtime artifacts (multiple GiB). They are copied
+# explicitly into the Docker image and must never be embedded in a Python sdist.
+include = [
+  "/care_ego",
+  "/tests",
+  "/docs",
+  "/README.md",
+  "/LICENSE.txt",
+  "/pyproject.toml",
+]
+exclude = [
+  "/weights/**",
+  "/imgs/**",
+  "/artifacts/**",
+  "/.venv/**",
+  "/deploy/nebius/terraform/.terraform/**",
+]
 
 [tool.uv]
 package = true

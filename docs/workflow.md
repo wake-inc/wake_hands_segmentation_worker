@@ -11,7 +11,7 @@ flowchart LR
     C[Client] -->|POST request| F[Flask HTTP threads]
     F --> R[Request queue]
     R --> W[Persistent request consumer]
-    W --> D[file URI download/copy]
+    W --> D[file copy or S3 download]
     D --> P[Video decoder producer]
     P --> Q[In-memory frame queue]
     Q --> G[Adaptive GPU consumer]
@@ -72,10 +72,24 @@ Both segmentation endpoints accept the same JSON object:
 }
 ```
 
+An S3-backed AWS or Nebius Object Storage request uses the same contract:
+
+```json
+{
+  "request_id": "aws-job-001",
+  "video_uri": "s3://wake-inference/jobs/aws-job-001/input.mp4",
+  "output_uri": "s3://wake-inference/jobs/aws-job-001/results/",
+  "max_frames": 10
+}
+```
+
+The response includes the exact result object URI, such as
+`s3://wake-inference/jobs/aws-job-001/results/aws-job-001.json`.
+
 | Field | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `video_uri` | yes | — | Input video. Only `file://` is currently accepted. |
-| `output_uri` | yes | — | Output directory as a `file://` URI. |
+| `video_uri` | yes | — | Input video object as a `file://` or `s3://` URI. |
+| `output_uri` | yes | — | Result directory or prefix as a `file://` or `s3://` URI. |
 | `request_id` | no | generated UUID | Safe output filename stem and request identity. |
 | `simplify_tolerance` | no | `2.0` | Topology-preserving polygon simplification tolerance. |
 | `min_area` | no | `64` | Minimum segmentation component area in pixels. |
@@ -114,6 +128,7 @@ Successful response:
 {
   "request_id": "job-001",
   "output_path": "/data/results/job-001.json",
+  "output_uri": "file:///data/results/job-001.json",
   "frame_count": 300,
   "batch_size": 128,
   "elapsed_seconds": 8.42,
@@ -151,9 +166,9 @@ connections.
 
 1. **Validate** — Reject unknown fields, unsafe IDs, unsupported URI schemes,
    and invalid numeric limits.
-2. **Resolve input** — Resolve and verify the local `file://` video.
-3. **Download** — Copy the source into an isolated temporary directory. This is
-   the extension point for future remote storage adapters.
+2. **Resolve input** — Validate the `file://` path or `s3://` bucket and key.
+3. **Download** — Copy or download the source into an isolated temporary
+   directory using the configured S3-compatible client.
 4. **Decode** — A producer thread decodes frames with OpenCV into an unbounded
    in-memory queue.
 5. **Batch** — The GPU consumer first tries batches of 128, then 64 and 32.
@@ -169,8 +184,8 @@ connections.
    later GPU batches continue.
 9. **Normalize** — Predictions are wrapped in the versioned universal result
    format and receive deterministic per-document IDs.
-10. **Persist** — JSON is flushed and fsynced to a temporary file, then replaced
-   atomically at the requested output path.
+10. **Persist** — Local JSON is flushed and replaced atomically; S3 JSON is
+    assembled locally and uploaded to the requested result prefix.
 11. **Deliver** — When enabled, POST the full document or file reference to the
     next service using delivery-only retries and an idempotency key.
 12. **Respond** — The waiting Future resolves and Flask sends the completion
@@ -212,8 +227,8 @@ Gunicorn master starts a replacement process and reloads the model.
   reports the current queue depth.
 - Lifecycle transitions are serialized, preventing concurrent HTTP requests
   from starting duplicate request-consumer threads.
-- The frame queue is intentionally unbounded to satisfy the all-frames-in-memory
-  pipeline. Capacity planning must therefore include decoded video memory.
+- Decode/preprocessing and inference use a bounded producer-consumer queue of
+  three batches, so long videos do not accumulate decoded frames in host RAM.
 
 CascadePSP officially targets CUDA and CPU. On Apple systems the upstream
 area-resize operation is incompatible with MPS for general frame dimensions,
@@ -235,8 +250,12 @@ are Python values in [`gunicorn.conf.py`](../gunicorn.conf.py).
 | `WAKE_LOG_LEVEL` | `info` | Gunicorn log level. |
 | `WAKE_REFINEMENT_MODE` | `low` | Default CascadePSP profile: `low` or `medium`. |
 | `WAKE_REQUEST_MAX_BYTES` | `1048576` | Maximum JSON request-body size. |
+| `WAKE_S3_ENDPOINT_URL` | AWS SDK default | Optional S3-compatible endpoint, required for Nebius Object Storage. |
+| `WAKE_S3_REGION` | `AWS_REGION`, then `AWS_DEFAULT_REGION` | Region used to sign S3-compatible requests. |
 | `WAKE_CASCADEPSP_MODEL_DIR` | project-root `weights` | Directory containing `cascadepsp_v1_0.pth`. |
 | `WAKE_CASCADEPSP_ALLOW_DOWNLOAD` | `false` when local model exists | Allow verified official-weight download when missing or corrupt. |
+| `WAKE_VIDEO_DECODER` | `opencv` | `nvdec` uses FFmpeg/NVDEC with an automatic OpenCV fallback. |
+| `WAKE_CUDA_GRAPH_BATCH_SIZE` | `0` | Fixed CUDA Graph batch; near-full tail batches are padded, while smaller OOM fallbacks run eagerly. |
 
 ## Operational endpoints
 
@@ -295,6 +314,18 @@ directory must permit writes by container UID 10001:
   "output_uri": "file:///data/results"
 }
 ```
+
+S3-backed jobs need no data mount. On AWS, the runtime identity needs
+`s3:GetObject` for input keys and `s3:PutObject` for result keys, and credentials
+come from the standard AWS credential chain. On Nebius, set
+`WAKE_S3_ENDPOINT_URL` to the regional Object Storage endpoint and provide a
+Nebius access key through the deployment secret channel. Credentials must not
+be embedded in the image or request.
+
+The exact same image and request schema run on both clouds:
+
+- AWS deployment assets: [`deploy/aws`](../deploy/aws)
+- Nebius deployment assets: [`deploy/nebius`](../deploy/nebius)
 
 Useful checks:
 

@@ -204,6 +204,144 @@ class CascadePspRefiner:
             raise RuntimeError(f"CascadePSP returned shape {score.shape}, expected {binary.shape}")
         return score
 
+    def _score_batch(
+        self,
+        images_bgr: list[np.ndarray],
+        masks: list[np.ndarray],
+        profile: RefinementProfile,
+    ) -> list[np.ndarray]:
+        if len(images_bgr) != len(masks):
+            raise ValueError("CascadePSP images and masks must have the same length")
+        try:
+            return self._score_batch_impl(images_bgr, masks, profile)
+        except RuntimeError as error:
+            is_oom = isinstance(error, torch.cuda.OutOfMemoryError) or (
+                "out of memory" in str(error).lower()
+            )
+            if not is_oom or len(images_bgr) <= 1:
+                raise
+            if torch.device(self.device).type == "cuda":
+                torch.cuda.empty_cache()
+            LOGGER.warning(
+                "CascadePSP batch of %d exceeded device memory; retrying frame by frame",
+                len(images_bgr),
+            )
+            return [self._score(image, mask, profile) for image, mask in zip(images_bgr, masks)]
+
+    def _score_batch_impl(
+        self,
+        images_bgr: list[np.ndarray],
+        masks: list[np.ndarray],
+        profile: RefinementProfile,
+    ) -> list[np.ndarray]:
+        """Refine a batch in one CascadePSP forward pass.
+
+        The upstream model is batch-capable even though its public ``refine``
+        helper processes one image at a time. Keeping empty/full masks out of
+        the forward pass preserves the scalar helper's exact behavior.
+        """
+        if not images_bgr:
+            return []
+        shape = masks[0].shape
+        if any(mask.shape != shape for mask in masks) or any(
+            image.shape[:2] != shape for image in images_bgr
+        ):
+            return [self._score(image, mask, profile) for image, mask in zip(images_bgr, masks)]
+
+        scores: list[np.ndarray | None] = [None] * len(masks)
+        valid_images: list[np.ndarray] = []
+        valid_masks: list[np.ndarray] = []
+        valid_indices: list[int] = []
+        for index, (image, mask) in enumerate(zip(images_bgr, masks)):
+            binary = mask > 0
+            if not binary.any():
+                scores[index] = np.zeros(binary.shape, dtype=np.uint8)
+            elif binary.all():
+                scores[index] = np.full(binary.shape, 255, dtype=np.uint8)
+            else:
+                valid_indices.append(index)
+                valid_images.append(image)
+                valid_masks.append(binary.astype(np.uint8) * 255)
+
+        if valid_images:
+            backend = self._backend
+            image_tensor = torch.stack([backend.im_transform(image) for image in valid_images]).to(
+                self.device
+            )
+            mask_tensor = torch.stack([backend.seg_transform(mask) for mask in valid_masks]).to(
+                self.device
+            )
+            if mask_tensor.ndim < 4:
+                mask_tensor = mask_tensor.unsqueeze(1)
+            with torch.inference_mode():
+                if profile.fast:
+                    from segmentation_refinement.main import process_im_single_pass
+
+                    output = process_im_single_pass(
+                        backend.model, image_tensor, mask_tensor, profile.max_size
+                    )
+                else:
+                    from segmentation_refinement.main import process_high_res_im
+
+                    output = process_high_res_im(
+                        backend.model, image_tensor, mask_tensor, profile.max_size
+                    )
+            values = (output[:, 0].to("cpu").numpy() * 255).astype(np.uint8)
+            for index, score in zip(valid_indices, values):
+                scores[index] = score
+
+        if any(score is None for score in scores):
+            raise RuntimeError("CascadePSP returned an incomplete refinement batch")
+        result = [score for score in scores if score is not None]
+        if any(score.shape != shape for score in result):
+            raise RuntimeError("CascadePSP returned an unexpected refinement shape")
+        return result
+
+    def refine_predictions(
+        self,
+        images_bgr: list[np.ndarray],
+        predictions: list[Prediction],
+        mode: RefinementMode,
+    ) -> list[Prediction]:
+        """Refine many predictions while retaining the scalar output semantics."""
+        if len(images_bgr) != len(predictions):
+            raise ValueError("CascadePSP images and predictions must have the same length")
+        if not predictions:
+            return []
+        profile = REFINEMENT_PROFILES[mode]
+        left_hand = self._score_batch(
+            images_bgr, [prediction.hands == 1 for prediction in predictions], profile
+        )
+        right_hand = self._score_batch(
+            images_bgr, [prediction.hands == 2 for prediction in predictions], profile
+        )
+        left_object = self._score_batch(
+            images_bgr, [prediction.left_object > 0 for prediction in predictions], profile
+        )
+        right_object = self._score_batch(
+            images_bgr, [prediction.right_object > 0 for prediction in predictions], profile
+        )
+        refined: list[Prediction] = []
+        for index, prediction in enumerate(predictions):
+            hand_scores = np.stack((left_hand[index], right_hand[index]), axis=0)
+            best_hand = hand_scores.argmax(axis=0).astype(np.uint8) + 1
+            tied = (left_hand[index] == right_hand[index]) & (left_hand[index] > 127)
+            best_hand[tied & (prediction.hands == 2)] = 2
+            hands = np.where(hand_scores.max(axis=0) > 127, best_hand, 0).astype(np.uint8)
+            left = (left_object[index] > 127).astype(np.uint8)
+            right = (right_object[index] > 127).astype(np.uint8)
+            refined.append(
+                Prediction(
+                    hands=hands,
+                    left_object=left,
+                    right_object=right,
+                    shared_object=((left > 0) & (right > 0)).astype(np.uint8),
+                    raw_contact=prediction.raw_contact,
+                    derived_contact=derive_contact(hands, left, right),
+                )
+            )
+        return refined
+
     def refine_prediction(
         self,
         image_bgr: np.ndarray,

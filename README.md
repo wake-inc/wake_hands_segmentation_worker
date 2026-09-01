@@ -96,7 +96,7 @@ the next GPU batch can start immediately.
 
 ```mermaid
 flowchart LR
-    R[Request queue] --> D[file:// download]
+    R[Request queue] --> D[file:// copy or s3:// download]
     D --> P[Frame producer]
     P --> Q[In-memory frame queue]
     Q --> G[Adaptive GPU batch consumer]
@@ -116,7 +116,7 @@ output = Path("outputs").resolve()
 
 with SegmentationService(
     checkpoint,
-    config=WorkerConfig(batch_sizes=(128, 64, 32, 16, 8, 4, 2, 1)),
+    config=WorkerConfig(batch_sizes=(6, 4, 2, 1)),
 ) as service:
     future = service.submit(
         {
@@ -136,14 +136,18 @@ with SegmentationService(
     print(result.output_path, result.batch_size)
 ```
 
-For now, `video_uri` and `output_uri` must use `file://`; the output URI names
-a directory. Each request produces `<request_id>.json` using the versioned,
-architecture-neutral `wake-ai/inference-result` schema. Frame indexes are
-integers in memory and strings after JSON serialization.
+`video_uri` and `output_uri` accept `file://` or `s3://`. The input URI names a
+video object, and the output URI names a directory or S3 prefix. On AWS, the
+worker uses the standard credential chain, so EC2 deployments should grant S3
+access through an instance role. On Nebius, configure the regional
+S3-compatible Object Storage endpoint and a Nebius access-key pair. Each request
+produces `<request_id>.json` using the versioned, architecture-neutral
+`wake-ai/inference-result` schema. Frame indexes are integers in memory and
+strings after JSON serialization.
 
 Requests may override batching, precision, refinement, geometry, input limits,
 and retry policy through a namespaced `config` object. Optional downstream
-delivery can POST the completed universal document or its `file://` reference
+delivery can POST the completed universal document or its result URI reference
 to another service. See
 [Request configuration and service chaining](docs/request-configuration.md).
 
@@ -199,7 +203,7 @@ The hand worker stores its frame-indexed geometry in
     "largest_batch_size": 1,
     "refinement_mode": "low",
     "effective_config": {
-      "inference": {"batch_sizes": [128, 64, 32, 16, 8, 4, 2, 1]},
+      "inference": {"batch_sizes": [6, 4, 2, 1]},
       "refinement": {"mode": "low"}
     },
     "delivery": {"enabled": false, "status": "disabled", "attempts": 0}
@@ -277,6 +281,23 @@ curl --no-buffer -X POST http://localhost:8080/v1/segment \
   }'
 ```
 
+On AWS, the same endpoint can stage its input and result through S3 using the
+EC2 instance role:
+
+```json
+{
+  "request_id": "aws-job-001",
+  "video_uri": "s3://wake-inference/jobs/aws-job-001/input.mp4",
+  "output_uri": "s3://wake-inference/jobs/aws-job-001/results/",
+  "max_frames": 10
+}
+```
+
+Nebius uses the same request body and `s3://` URI format. Its container receives
+`WAKE_S3_ENDPOINT_URL=https://storage.<region>.nebius.cloud`,
+`WAKE_S3_REGION`, and the Nebius Object Storage access key. No request-level
+cloud switch is needed.
+
 For infrastructure that closes silent connections, the SSE endpoint emits a
 heartbeat every 15 seconds and eventually a `result` event:
 
@@ -332,8 +353,10 @@ default and the API is consumed from the container network, the literal command
 `docker run wake_hands_segmentation_worker:0.1.0` is sufficient.
 
 Input and output `file://` URIs still refer to the container filesystem. A data
-volume is optional and is needed only when a job must exchange persistent files
-with the host; it is not needed for model startup.
+volume is optional and is needed only when a local job must exchange persistent
+files with the host. S3-backed jobs need no data volume. AWS uses its normal SDK
+credential chain; Nebius uses the configured compatible endpoint and access
+key.
 
 For packaging tests on a machine without NVIDIA hardware, override the device:
 
@@ -343,7 +366,8 @@ docker run --rm --env WAKE_DEVICE=cpu \
 ```
 
 See [Service workflow](docs/workflow.md#docker-deployment) for runtime and
-verification details.
+verification details. Cloud deployment assets are under
+[`deploy/aws`](deploy/aws) and [`deploy/nebius`](deploy/nebius).
 
 ## Training configuration
 

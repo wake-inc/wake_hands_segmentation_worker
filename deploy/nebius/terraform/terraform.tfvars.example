@@ -1,0 +1,23 @@
+# Existing Nebius project named test-workers (eu-north1).
+project_id = ""
+tenant_id  = ""
+
+# The API currently has no application authentication. Restrict this to the
+# calling service, VPN, or your own public /32. Never leave 0.0.0.0/0 in a
+# shared or production environment.
+api_allowed_cidrs = ["203.0.113.10/32"]
+
+# Optional break-glass SSH access.
+# ssh_allowed_cidrs = ["203.0.113.10/32"]
+ssh_authorized_key = ""
+
+# First apply: leave empty so Terraform creates the registry and dependencies.
+# Second apply: use the digest printed by docker inspect after pushing.
+worker_image = ""
+
+# Keep false for an uninterrupted worker with Nebius recovery enabled.
+# Set true only for disposable benchmarks that may be stopped by the platform.
+preemptible = false
+
+# L40S benchmark optimum. Set to 0 if a CUDA backend cannot capture graphs.
+cuda_graph_batch_size = 6

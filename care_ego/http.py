@@ -14,14 +14,25 @@ from werkzeug.exceptions import HTTPException, ServiceUnavailable
 
 from . import server_config
 from .schema import json_schema
-from .service import SegmentationResult, SegmentationService, WorkerConfig
+from .service import (
+    SegmentationResult,
+    SegmentationService,
+    ServiceOverloadedError,
+    WorkerConfig,
+)
+from .storage import UriStorage
 
 LOGGER = logging.getLogger(__name__)
 
 
 def _result_payload(result: SegmentationResult) -> dict[str, Any]:
     payload = asdict(result)
-    payload["output_path"] = str(result.output_path)
+    if result.output_path is None:
+        payload.pop("output_path")
+    else:
+        payload["output_path"] = str(result.output_path)
+    if result.output_uri is None and result.output_path is not None:
+        payload["output_uri"] = result.output_path.resolve().as_uri()
     return payload
 
 
@@ -42,14 +53,21 @@ def create_app(
             batch_sizes=server_config.BATCH_SIZES,
             mixed_precision=server_config.MIXED_PRECISION,
             geometry_workers=server_config.GEOMETRY_WORKERS,
+            temporal_stride=server_config.TEMPORAL_STRIDE,
             request_attempts=server_config.REQUEST_ATTEMPTS,
             retry_backoff_seconds=server_config.RETRY_BACKOFF_SECONDS,
             completed_request_cache_size=server_config.COMPLETED_REQUEST_CACHE_SIZE,
+            max_pending_requests=server_config.MAX_PENDING_REQUESTS,
             refinement_mode=server_config.REFINEMENT_MODE,
             refinement_model_directory=server_config.CASCADEPSP_MODEL_DIRECTORY,
             refinement_allow_download=server_config.CASCADEPSP_ALLOW_DOWNLOAD,
         ),
         model_metadata=server_config.MODEL_METADATA,
+        storage=UriStorage(
+            s3_endpoint_url=server_config.S3_ENDPOINT_URL,
+            s3_region_name=server_config.S3_REGION,
+            max_input_bytes=server_config.MAX_INPUT_BYTES,
+        ),
     )
     runtime.start()
     app.extensions["segmentation_service"] = runtime
@@ -97,6 +115,8 @@ def create_app(
         try:
             result = submit_request().result(timeout=None)
             return jsonify(_result_payload(result))
+        except ServiceOverloadedError as error:
+            return jsonify({"error": str(error), "type": type(error).__name__}), 429
         except HTTPException as error:
             return jsonify({"error": error.description, "type": type(error).__name__}), error.code
         except (TypeError, ValueError) as error:
@@ -110,6 +130,8 @@ def create_app(
         """Return SSE heartbeats until the queued request completes."""
         try:
             future = submit_request()
+        except ServiceOverloadedError as error:
+            return jsonify({"error": str(error), "type": type(error).__name__}), 429
         except HTTPException as error:
             return jsonify({"error": error.description, "type": type(error).__name__}), error.code
         except (TypeError, ValueError) as error:

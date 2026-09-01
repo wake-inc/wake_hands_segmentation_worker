@@ -6,7 +6,6 @@ import math
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from typing import Any, Literal, Protocol
 from urllib.parse import urlparse
 
@@ -14,6 +13,9 @@ import requests
 
 DeliveryPayload = Literal["document", "reference"]
 _MAX_DELIVERY_ATTEMPTS = 20
+_MAX_DELIVERY_TIMEOUT_SECONDS = 300.0
+_MAX_DELIVERY_BACKOFF_SECONDS = 60.0
+_MAX_DELIVERY_RETRY_DELAY_SECONDS = 60.0
 
 
 def _number(value: Any, name: str) -> float:
@@ -102,14 +104,20 @@ class DeliveryConfig:
         backoff_seconds = _number(
             value.get("backoff_seconds", 1.0), "config.delivery.backoff_seconds"
         )
-        if timeout_seconds <= 0:
-            raise ValueError("config.delivery.timeout_seconds must be positive")
+        if not 0 < timeout_seconds <= _MAX_DELIVERY_TIMEOUT_SECONDS:
+            raise ValueError(
+                "config.delivery.timeout_seconds must be between 0 and "
+                f"{_MAX_DELIVERY_TIMEOUT_SECONDS:g}"
+            )
         if not 1 <= attempts <= _MAX_DELIVERY_ATTEMPTS:
             raise ValueError(
                 f"config.delivery.attempts must be between 1 and {_MAX_DELIVERY_ATTEMPTS}"
             )
-        if backoff_seconds < 0:
-            raise ValueError("config.delivery.backoff_seconds cannot be negative")
+        if not 0 <= backoff_seconds <= _MAX_DELIVERY_BACKOFF_SECONDS:
+            raise ValueError(
+                "config.delivery.backoff_seconds must be between 0 and "
+                f"{_MAX_DELIVERY_BACKOFF_SECONDS:g}"
+            )
 
         return cls(
             enabled=enabled,
@@ -141,7 +149,7 @@ class ResultDelivery(Protocol):
         self,
         config: DeliveryConfig,
         document: Mapping[str, Any],
-        output_path: Path,
+        output_uri: str,
         request_id: str,
     ) -> DeliveryReceipt: ...
 
@@ -156,7 +164,7 @@ class HttpResultDelivery:
         self,
         config: DeliveryConfig,
         document: Mapping[str, Any],
-        output_path: Path,
+        output_uri: str,
         request_id: str,
     ) -> DeliveryReceipt:
         if not config.enabled:
@@ -172,7 +180,7 @@ class HttpResultDelivery:
                 "event": "inference.completed",
                 "schema": document["schema"],
                 "request": document["request"],
-                "result": {"uri": output_path.resolve().as_uri()},
+                "result": {"uri": output_uri},
             }
 
         headers = {
@@ -186,6 +194,7 @@ class HttpResultDelivery:
         for attempt in range(1, config.attempts + 1):
             attempts_made = attempt
             retryable = True
+            response = None
             try:
                 response = self.session.post(
                     config.url,
@@ -207,10 +216,20 @@ class HttpResultDelivery:
                 retryable = response.status_code in {408, 425, 429} or response.status_code >= 500
             except requests.RequestException as error:
                 last_error = error
+            finally:
+                if response is not None:
+                    close = getattr(response, "close", None)
+                    if close is not None:
+                        close()
             if not retryable or attempt == config.attempts:
                 break
             if config.backoff_seconds:
-                time.sleep(config.backoff_seconds * (2 ** (attempt - 1)))
+                time.sleep(
+                    min(
+                        _MAX_DELIVERY_RETRY_DELAY_SECONDS,
+                        config.backoff_seconds * (2 ** (attempt - 1)),
+                    )
+                )
 
         return DeliveryReceipt(
             enabled=True,

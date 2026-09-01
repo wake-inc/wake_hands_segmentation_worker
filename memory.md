@@ -11,14 +11,15 @@ versioned architecture-neutral JSON result.
 
 1. A request enters the persistent producer-consumer worker.
 2. A producer decodes video frames into an in-memory queue.
-3. One GPU consumer attempts batches from 128 down to 1 on OOM.
+3. One GPU consumer attempts batches 6, 4, 2, and 1 on OOM and remembers the
+   device's successful limit for later requests.
 4. CascadePSP refines left/right hand and object masks.
-5. CPU geometry workers create simplified Shapely geometry and atomically save
+5. Geometry workers create simplified Shapely geometry and atomically save
    `<request_id>.json`.
 
-The current transport accepts local `file://` input and output URIs only.
-Remote input download is not implemented; local files are copied into a
-temporary request workspace.
+The current transport accepts local `file://` and Nebius/AWS-compatible
+`s3://` input and output URIs. Inputs are staged into a temporary request
+workspace.
 
 ## Result contract and verified behavior
 
@@ -68,13 +69,9 @@ The Dockerfile builds a Linux/amd64 CUDA 12.1 image that embeds exactly the two
 runtime weights at `/app/weights`, owned by UID/GID 10001, files mode `0444`,
 directory mode `0555`.
 
-Last verified image:
-
-- tag: `wake_hands_segmentation_worker:0.1.0`
-- digest: `sha256:a4a768a03506d76ed6db2cdafd4df0ff5a4dc7cb7081a5d4396245436049b6e8`
-- architecture: `linux/amd64`
-- size: about 7.49 GB
-- runtime: PyTorch `2.2.2+cu121`, CUDA build `12.1`
+No registry, tag, or digest is committed to the release tree. Deployment must
+supply a newly built, digest-pinned `linux/amd64` image through local ignored
+configuration.
 
 The image passed non-root embedded-weight hash checks, Gunicorn startup,
 `/health/ready`, and `/v1/schema` without a weight bind mount. A production
@@ -86,7 +83,7 @@ docker run --detach \
   --restart unless-stopped \
   --gpus all \
   --publish 8080:8080 \
-  wake_hands_segmentation_worker:0.1.0
+  "${WAKE_IMAGE}"
 ```
 
 `--gpus all`, port publication, and restart policy are Docker host settings and
@@ -98,7 +95,7 @@ release runner before publishing.
 
 - `uv lock --check` passed.
 - `uv run --frozen ruff check .` passed.
-- `uv run --frozen pytest -q` passed: 40 tests.
+- `uv run --frozen pytest -q` passed: 59 tests.
 - `uv build` produced a valid wheel and source distribution for `0.1.0`.
 - `twine check` passed for both artifacts.
 - Native direct CaRe-Ego inference and full service/CascadePSP smoke tests

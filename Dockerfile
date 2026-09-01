@@ -6,9 +6,8 @@ ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.32
 FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_IMAGE} AS base
 
-ARG APP_VERSION=0.1.0
+ARG APP_VERSION=""
 ARG TARGETARCH
-ARG VENV_CACHE_REVISION=2
 
 LABEL org.opencontainers.image.title="WAKE AI Hands Segmentation Worker GPU" \
       org.opencontainers.image.version="${APP_VERSION}" \
@@ -33,6 +32,7 @@ RUN apt-get update \
         libgl1 \
         libglib2.0-0 \
         libgomp1 \
+        ffmpeg \
         tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --home-dir /tmp/wake-worker --uid 10001 worker \
@@ -42,11 +42,14 @@ RUN apt-get update \
 FROM base AS dependencies
 
 ARG TARGETARCH
-ARG VENV_CACHE_REVISION
 
 ENV UV_LINK_MODE=copy \
+    UV_CONCURRENT_DOWNLOADS=2 \
+    UV_HTTP_RETRIES=10 \
+    UV_HTTP_TIMEOUT=600 \
     UV_PYTHON_DOWNLOADS=never \
-    UV_VENV_RELOCATABLE=1
+    UV_VENV_RELOCATABLE=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
 
 WORKDIR /build
 
@@ -55,42 +58,36 @@ WORKDIR /build
 COPY pyproject.toml uv.lock ./
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=cache,id=uv-cache,target=/root/.cache/uv,sharing=locked \
-    --mount=type=cache,id=uv-venv-${TARGETARCH}-${VENV_CACHE_REVISION},target=/staged-venv,sharing=locked \
     --mount=type=cache,id=uv-tmp-${TARGETARCH},target=/tmp/uv-tmp,sharing=locked \
     TMPDIR=/tmp/uv-tmp \
-    UV_PROJECT_ENVIRONMENT=/staged-venv \
     uv sync --frozen --no-dev --no-install-project
+
+# This stage changes when application code changes, but inherits the fully
+# populated dependency environment above. Installing the local package now
+# does not redownload/reinstall CUDA and other locked dependencies.
+FROM dependencies AS package
 
 COPY README.md LICENSE.txt ./
 COPY care_ego ./care_ego
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=cache,id=uv-cache,target=/root/.cache/uv,sharing=locked \
-    --mount=type=cache,id=uv-venv-${TARGETARCH}-${VENV_CACHE_REVISION},target=/staged-venv,sharing=locked \
     --mount=type=cache,id=uv-tmp-${TARGETARCH},target=/tmp/uv-tmp,sharing=locked \
     TMPDIR=/tmp/uv-tmp \
-    UV_PROJECT_ENVIRONMENT=/staged-venv \
     uv sync --frozen --no-dev --no-editable \
-    && uv venv --relocatable --allow-existing /staged-venv \
-    && TMPDIR=/tmp/uv-tmp UV_PROJECT_ENVIRONMENT=/staged-venv \
-        uv sync --frozen --no-dev --no-editable --reinstall \
+    && find /opt/venv -type d -exec chmod 0755 {} + \
+    && find /opt/venv -type f -exec chmod a+r {} + \
+    && find /opt/venv/bin -type f -exec chmod a+rx {} + \
     && { \
-        sha256sum pyproject.toml uv.lock /staged-venv/bin/gunicorn; \
+        sha256sum pyproject.toml uv.lock /opt/venv/bin/gunicorn; \
         find care_ego -type f -print0 | sort -z | xargs -0 sha256sum; \
     } | sha256sum > /venv-ready
 
 FROM base AS runtime
-
-ARG TARGETARCH
-ARG VENV_CACHE_REVISION
-
-# Referencing the marker makes the dependency stage complete before the shared
-# cache mount is copied. Only the final environment enters the runtime image;
-# uv, wheel caches, extraction files, and the project source remain behind.
-COPY --from=dependencies /venv-ready /venv-ready
-
-RUN --mount=type=cache,id=uv-venv-${TARGETARCH}-${VENV_CACHE_REVISION},target=/staged-venv,sharing=locked \
-    cp --archive /staged-venv /opt/venv \
-    && rm /venv-ready
+# Referencing the marker makes the package stage complete before the runtime
+# filesystem is assembled. Only the final environment enters the image.
+COPY --from=package /venv-ready /venv-ready
+COPY --from=package /opt/venv /opt/venv
+RUN rm /venv-ready
 
 WORKDIR /app
 COPY --chown=10001:10001 --chmod=0444 gunicorn.conf.py ./gunicorn.conf.py

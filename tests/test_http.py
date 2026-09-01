@@ -37,6 +37,32 @@ def test_blocking_endpoint_returns_completed_result() -> None:
     assert response.status_code == 200
     assert response.json["request_id"] == "job-1"
     assert response.json["batch_size"] == 128
+    assert response.json["output_uri"] == Path("/tmp/job-1.json").resolve().as_uri()
+
+
+def test_blocking_endpoint_returns_s3_output_without_temporary_path() -> None:
+    class FakeS3Service(FakeService):
+        def submit(self, _value):
+            future = Future()
+            future.set_result(
+                SegmentationResult(
+                    request_id="job-1",
+                    output_path=None,
+                    output_uri="s3://wake-test/jobs/job-1/results/job-1.json",
+                    frame_count=10,
+                    batch_size=8,
+                    elapsed_seconds=1.5,
+                )
+            )
+            return future
+
+    response = (
+        create_app(FakeS3Service()).test_client().post("/v1/segment", json={"video_uri": "ignored"})
+    )
+
+    assert response.status_code == 200
+    assert "output_path" not in response.json
+    assert response.json["output_uri"] == "s3://wake-test/jobs/job-1/results/job-1.json"
 
 
 def test_stream_endpoint_returns_sse_result() -> None:

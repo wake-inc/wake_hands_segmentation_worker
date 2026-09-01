@@ -77,3 +77,37 @@ def test_existing_cascadepsp_model_must_match_sha256(tmp_path, monkeypatch) -> N
     model_path.write_bytes(b"corrupt")
     with pytest.raises(RuntimeError, match="SHA-256"):
         ensure_cascadepsp_model(tmp_path, allow_download=False)
+
+
+def test_cascadepsp_rejects_misaligned_batches() -> None:
+    refiner = CascadePspRefiner("cpu", backend=IdentityBackend())
+
+    with pytest.raises(ValueError, match="same length"):
+        refiner.refine_predictions(
+            [np.zeros((16, 16, 3), dtype=np.uint8)],
+            [_prediction(), _prediction()],
+            "low",
+        )
+
+
+def test_cascadepsp_oom_batch_falls_back_to_individual_frames(monkeypatch) -> None:
+    refiner = CascadePspRefiner("cpu", backend=IdentityBackend())
+    images = [np.zeros((16, 16, 3), dtype=np.uint8) for _ in range(2)]
+    masks = [prediction.hands > 0 for prediction in (_prediction(), _prediction())]
+    calls = 0
+
+    def fail_batch(*_args):
+        raise RuntimeError("CUDA out of memory")
+
+    def score(_image, mask, _profile):
+        nonlocal calls
+        calls += 1
+        return mask.astype(np.uint8) * 255
+
+    monkeypatch.setattr(refiner, "_score_batch_impl", fail_batch)
+    monkeypatch.setattr(refiner, "_score", score)
+
+    result = refiner._score_batch(images, masks, refinement.REFINEMENT_PROFILES["low"])
+
+    assert len(result) == 2
+    assert calls == 2

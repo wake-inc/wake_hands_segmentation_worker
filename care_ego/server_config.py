@@ -41,17 +41,27 @@ CHECKPOINT_PATH = (
     )
 )
 DEVICE = os.environ.get("WAKE_DEVICE", "auto")
+S3_ENDPOINT_URL = os.environ.get("WAKE_S3_ENDPOINT_URL") or None
+S3_REGION = (
+    os.environ.get("WAKE_S3_REGION")
+    or os.environ.get("AWS_REGION")
+    or os.environ.get("AWS_DEFAULT_REGION")
+    or None
+)
 
 # Probe the requested high-throughput sizes first. Smaller values prevent a
 # permanent failure on GPUs where even a batch of 32 does not fit.
-BATCH_SIZES = (128, 64, 32, 16, 8, 4, 2, 1)
+BATCH_SIZES = (6, 4, 2, 1)
 MIXED_PRECISION = True
 GEOMETRY_WORKERS = max(1, min(8, (os.cpu_count() or 2) // 2))
+TEMPORAL_STRIDE = _environment_positive_int("WAKE_TEMPORAL_STRIDE", 1)
 REQUEST_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 1.0
 COMPLETED_REQUEST_CACHE_SIZE = 256
+MAX_PENDING_REQUESTS = _environment_positive_int("WAKE_MAX_PENDING_REQUESTS", 8)
 SSE_HEARTBEAT_SECONDS = 15.0
 REQUEST_MAX_BYTES = _environment_positive_int("WAKE_REQUEST_MAX_BYTES", 1024 * 1024)
+MAX_INPUT_BYTES = _environment_positive_int("WAKE_MAX_INPUT_BYTES", 40 * 1024**3)
 REFINEMENT_MODE = os.environ.get("WAKE_REFINEMENT_MODE", "low")
 _refinement_directory = os.environ.get("WAKE_CASCADEPSP_MODEL_DIR")
 _local_refinement_directory = _source_root / "weights"
