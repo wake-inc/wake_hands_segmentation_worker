@@ -2,25 +2,23 @@
 
 ## Purpose
 
-`wake_hands_segmentation_worker` packages CaRe-Ego as a Wake GPU worker. Its
-single entry point consumes durable `track_hands` jobs from RabbitMQ by default;
-an isolated operator debug Job may instead expose the same registered processor
-through the generic local Wake HTTP runner. Both paths run adaptive batched
-CaRe-Ego inference, refine masks with CascadePSP, and write a versioned
-architecture-neutral JSON result.
+`wake_hands_segmentation_worker` packages CaRe-Ego as a persistent
+Flask/Gunicorn GPU worker. It accepts `file://` video requests, runs adaptive
+batched CaRe-Ego inference, refines masks with CascadePSP, and writes a
+versioned architecture-neutral JSON result.
 
 ## Runtime pipeline
 
-1. A queue job, or generic local HTTP job, enters the persistent GPU worker.
+1. A request enters the persistent producer-consumer worker.
 2. A producer decodes video frames into an in-memory queue.
 3. One GPU consumer attempts batches from 128 down to 1 on OOM.
 4. CascadePSP refines left/right hand and object masks.
 5. CPU geometry workers create simplified Shapely geometry and atomically save
    `<request_id>.json`.
 
-The worker receives a short-lived source URL and expected SHA-256 in its Wake
-payload, downloads one verified scratch copy, and processes that copy directly.
-The segmentation service itself continues to accept local `file://` paths.
+The current transport accepts local `file://` input and output URIs only.
+Remote input download is not implemented; local files are copied into a
+temporary request workspace.
 
 ## Result contract and verified behavior
 
@@ -66,7 +64,7 @@ Training-only artifacts are deliberately excluded from Docker:
 
 ## Docker image
 
-The Dockerfile builds a Linux/amd64 CUDA 12.8-compatible image that embeds exactly the two
+The Dockerfile builds a Linux/amd64 CUDA 12.1 image that embeds exactly the two
 runtime weights at `/app/weights`, owned by UID/GID 10001, files mode `0444`,
 directory mode `0555`.
 
@@ -76,21 +74,25 @@ Last verified image:
 - digest: `sha256:a4a768a03506d76ed6db2cdafd4df0ff5a4dc7cb7081a5d4396245436049b6e8`
 - architecture: `linux/amd64`
 - size: about 7.49 GB
-- runtime: PyTorch `2.7.1`, CUDA build `12.8`
+- runtime: PyTorch `2.2.2+cu121`, CUDA build `12.1`
 
-The image must be built and smoke-tested on a Linux/NVIDIA runner before
-publishing. Queue mode needs RabbitMQ and processing-workspace configuration.
-HTTP debug mode listens only inside its temporary Kubernetes Job and is reached
-through `kubectl port-forward`; it is not a public production service.
+The image passed non-root embedded-weight hash checks, Gunicorn startup,
+`/health/ready`, and `/v1/schema` without a weight bind mount. A production
+host still needs Docker runtime flags to grant GPU access and publish a port:
 
 ```bash
-docker run --rm --gpus all \
-  -e WAKE_RUNNER_MODE=http \
-  -e RUNNER_IDLE_EXIT_S=900 \
+docker run --detach \
+  --name wake_hands_segmentation_worker \
+  --restart unless-stopped \
+  --gpus all \
+  --publish 8080:8080 \
   wake_hands_segmentation_worker:0.1.0
 ```
 
-`--gpus all` is a Docker host setting and cannot be encoded in the image.
+`--gpus all`, port publication, and restart policy are Docker host settings and
+cannot be encoded in the image. At the last release audit Docker Desktop was
+not running, so the image must be rebuilt and tested on the actual Linux/NVIDIA
+release runner before publishing.
 
 ## Quality checks completed
 

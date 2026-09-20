@@ -268,10 +268,9 @@ class _ServiceProvider:
         progress: Callable[..., None],
     ) -> Any:
         if debug.service_lifetime == "perJob":
-            with _segmentation_service() as service:
-                return service.process(request, on_batch_complete=progress)
+            return _segmentation_service().process(request, on_batch_complete=progress)
         if self._service is None:
-            self._service = _segmentation_service().start()
+            self._service = _segmentation_service()
         return self._service.process(request, on_batch_complete=progress)
 
     def close(self) -> None:
