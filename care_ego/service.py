@@ -8,13 +8,12 @@ import math
 import os
 import queue
 import re
-import shutil
 import tempfile
 import threading
 import time
 import uuid
 from collections import OrderedDict, deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -51,6 +50,7 @@ _MAX_BATCH_SIZE = 4096
 _MAX_GEOMETRY_WORKERS = 64
 _MAX_REQUEST_ATTEMPTS = 20
 _MAX_COMPLETED_REQUEST_CACHE_SIZE = 10_000
+BatchProgressCallback = Callable[[int, int, float], None]
 
 
 def _file_uri_path(uri: str) -> Path:
@@ -407,6 +407,7 @@ class _AdaptiveConsumer:
         self,
         frame_queue: queue.Queue,
         request: SegmentationRequest,
+        on_batch_complete: BatchProgressCallback | None = None,
     ) -> tuple[dict[int, list[dict]], int]:
         candidates = request.batch_sizes or self.config.batch_sizes
         candidate_index = 0
@@ -432,6 +433,7 @@ class _AdaptiveConsumer:
 
                 actual_size = min(target_size, len(pending))
                 batch = [pending[index] for index in range(actual_size)]
+                batch_started = time.monotonic()
                 try:
                     predictions = predict_batch(
                         self.model,
@@ -464,6 +466,12 @@ class _AdaptiveConsumer:
                     )
                 for _ in range(actual_size):
                     pending.popleft()
+                if on_batch_complete is not None:
+                    on_batch_complete(
+                        len(annotation_jobs),
+                        actual_size,
+                        time.monotonic() - batch_started,
+                    )
 
         annotations = {index: annotation_jobs[index].result() for index in sorted(annotation_jobs)}
         return annotations, largest_actual_batch
@@ -604,9 +612,17 @@ class SegmentationService:
             self._requests.put(_RequestEnvelope(request=request, future=future))
             return future
 
-    def process(self, value: Mapping[str, Any]) -> SegmentationResult:
+    def process(
+        self,
+        value: Mapping[str, Any],
+        *,
+        on_batch_complete: BatchProgressCallback | None = None,
+    ) -> SegmentationResult:
         """Process one request synchronously using the same worker pipeline."""
-        return self._process_with_retries(SegmentationRequest.from_dict(value))
+        return self._process_with_retries(
+            SegmentationRequest.from_dict(value),
+            on_batch_complete=on_batch_complete,
+        )
 
     @property
     def is_running(self) -> bool:
@@ -649,7 +665,12 @@ class SegmentationService:
                 if threading.current_thread() is self._thread:
                     self._accepting_requests = False
 
-    def _process_with_retries(self, request: SegmentationRequest) -> SegmentationResult:
+    def _process_with_retries(
+        self,
+        request: SegmentationRequest,
+        *,
+        on_batch_complete: BatchProgressCallback | None = None,
+    ) -> SegmentationResult:
         last_error: Exception | None = None
         attempts = request.request_attempts or self.config.request_attempts
         backoff = (
@@ -659,7 +680,9 @@ class SegmentationService:
         )
         for attempt in range(1, attempts + 1):
             try:
-                return self._process(request)
+                if on_batch_complete is None:
+                    return self._process(request)
+                return self._process(request, on_batch_complete=on_batch_complete)
             except (FileNotFoundError, VideoDecodeError):
                 raise
             except (OSError, RuntimeError) as error:
@@ -682,7 +705,12 @@ class SegmentationService:
         assert last_error is not None
         raise last_error
 
-    def _process(self, request: SegmentationRequest) -> SegmentationResult:
+    def _process(
+        self,
+        request: SegmentationRequest,
+        *,
+        on_batch_complete: BatchProgressCallback | None = None,
+    ) -> SegmentationResult:
         started = time.monotonic()
         source = _file_uri_path(request.video_uri)
         if not source.is_file():
@@ -691,21 +719,18 @@ class SegmentationService:
         output_directory.mkdir(parents=True, exist_ok=True)
         output_path = output_directory / f"{request.request_id}.json"
 
-        with tempfile.TemporaryDirectory(prefix="care-ego-video-") as temporary:
-            local_video = Path(temporary) / source.name
-            shutil.copy2(source, local_video)
-            frame_queue: queue.Queue = queue.Queue(maxsize=0)
-            producer = _FrameProducer(local_video, frame_queue, request.max_frames)
-            producer.start()
-            try:
-                annotations, batch_size = _AdaptiveConsumer(
-                    self._ensure_model(), self._ensure_refiner(), self.config
-                ).consume(frame_queue, request)
-            finally:
-                producer.stop()
-                producer.join()
-            if producer.error is not None:
-                raise producer.error
+        frame_queue: queue.Queue = queue.Queue(maxsize=0)
+        producer = _FrameProducer(source, frame_queue, request.max_frames)
+        producer.start()
+        try:
+            annotations, batch_size = _AdaptiveConsumer(
+                self._ensure_model(), self._ensure_refiner(), self.config
+            ).consume(frame_queue, request, on_batch_complete=on_batch_complete)
+        finally:
+            producer.stop()
+            producer.join()
+        if producer.error is not None:
+            raise producer.error
 
         document = build_result_document(
             request_id=request.request_id,

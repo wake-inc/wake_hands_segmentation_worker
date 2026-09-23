@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+mode="${GPU_TORCH_MODE:-bundled}"
+
+case "$mode" in
+  bundled)
+    echo "gpu_torch_runtime mode=bundled"
+    exec python -m care_ego.queue_runner
+    ;;
+  download)
+    runtime_dir="${GPU_TORCH_DOWNLOAD_DIR:-/tmp/wake-torch-cu128}"
+    echo "gpu_torch_runtime mode=download runtime_dir=$runtime_dir"
+    python -m venv --system-site-packages "$runtime_dir"
+    "$runtime_dir/bin/python" -m pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cu128 \
+      torch==2.7.1+cu128 \
+      torchvision==0.22.1+cu128
+    exec "$runtime_dir/bin/python" -c \
+      "import runpy, sys; sys.path.append('/opt/venv/lib/python3.12/site-packages'); runpy.run_module('care_ego.queue_runner', run_name='__main__')"
+    ;;
+  *)
+    echo "GPU_TORCH_MODE must be bundled or download, got: $mode" >&2
+    exit 2
+    ;;
+esac

@@ -1,4 +1,4 @@
-"""Python-only production settings for the Flask/Gunicorn service."""
+"""Runtime settings for queue and debug HTTP execution."""
 
 from __future__ import annotations
 
@@ -26,6 +26,19 @@ def _environment_positive_int(name: str, default: int) -> int:
     return value
 
 
+def _environment_batch_sizes(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        values = tuple(int(value.strip()) for value in raw.split(",") if value.strip())
+    except ValueError as error:
+        raise ValueError(f"{name} must contain comma-separated integers") from error
+    if not values or any(value < 1 or value > 4096 for value in values):
+        raise ValueError(f"{name} values must be between 1 and 4096")
+    return tuple(sorted(set(values), reverse=True))
+
+
 _checkpoint_environment = os.environ.get("WAKE_CHECKPOINT_PATH")
 _source_root = Path(__file__).resolve().parents[1]
 _checkpoint_candidates = (
@@ -44,14 +57,18 @@ DEVICE = os.environ.get("WAKE_DEVICE", "auto")
 
 # Probe the requested high-throughput sizes first. Smaller values prevent a
 # permanent failure on GPUs where even a batch of 32 does not fit.
-BATCH_SIZES = (128, 64, 32, 16, 8, 4, 2, 1)
-MIXED_PRECISION = True
-GEOMETRY_WORKERS = max(1, min(8, (os.cpu_count() or 2) // 2))
-REQUEST_ATTEMPTS = 3
-RETRY_BACKOFF_SECONDS = 1.0
-COMPLETED_REQUEST_CACHE_SIZE = 256
-SSE_HEARTBEAT_SECONDS = 15.0
-REQUEST_MAX_BYTES = _environment_positive_int("WAKE_REQUEST_MAX_BYTES", 1024 * 1024)
+BATCH_SIZES = _environment_batch_sizes(
+    "WAKE_BATCH_SIZES",
+    (128, 64, 32, 16, 8, 4, 2, 1),
+)
+MIXED_PRECISION = _environment_bool("WAKE_MIXED_PRECISION", True)
+GEOMETRY_WORKERS = _environment_positive_int(
+    "WAKE_GEOMETRY_WORKERS",
+    max(1, min(8, (os.cpu_count() or 2) // 2)),
+)
+if GEOMETRY_WORKERS > 64:
+    raise ValueError("WAKE_GEOMETRY_WORKERS cannot exceed 64")
+DEBUG_TASK_OVERRIDES = _environment_bool("WAKE_DEBUG_TASK_OVERRIDES", False)
 REFINEMENT_MODE = os.environ.get("WAKE_REFINEMENT_MODE", "low")
 _refinement_directory = os.environ.get("WAKE_CASCADEPSP_MODEL_DIR")
 _local_refinement_directory = _source_root / "weights"

@@ -248,56 +248,28 @@ overlaps inference, geometry work is threaded, and first-stage batches are
 attempted from 128 down to 1 on out-of-memory failures. CascadePSP then refines
 four binary masks per frame with one persistent second-stage model.
 
-## Flask service
+## Wake runner
 
-The production server uses one Gunicorn process so the model is loaded into GPU
-memory only once. Eight HTTP threads can hold blocking or streaming sockets
-while the internal consumer serializes GPU work. Gunicorn has no active-request
-timeout and its master automatically replaces a crashed worker process.
+The image starts `python -m care_ego.queue_runner`. `WAKE_RUNNER_MODE=queue`
+(the default) consumes durable Wake jobs from RabbitMQ and reports progress at
+each completed inference batch. It accepts only `track_hands:1`, downloads the
+payload's checksum-verified `sourceVideo` once to scratch, and writes processor
+output through the Wake workspace.
 
-With the default project-root weight layout, start the server directly:
+`WAKE_RUNNER_MODE=http` starts the generic Wake HTTP runner for a temporary,
+local debug session. It exposes `/health/live`, `/health/ready`, `POST
+/v1/jobs`, job status/result/artifact endpoints, and SSE events. The model
+remains loaded between debug jobs by default. Set `WAKE_DEBUG_TASK_OVERRIDES=true`
+only for an isolated debug session to allow bounded payload overrides for batch
+sizes, mixed precision, geometry workers, refinement mode, or per-job model
+lifetime. See [the workflow guide](docs/workflow.md).
 
-```bash
-uv run --frozen gunicorn -c gunicorn.conf.py
-```
-
-The blocking endpoint keeps its socket open until the queued video finishes:
-
-```bash
-curl --no-buffer -X POST http://localhost:8080/v1/segment \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "request_id": "job-001",
-    "video_uri": "file:///data/input.mp4",
-    "output_uri": "file:///data/output",
-    "config": {
-      "refinement": {"mode": "low"},
-      "delivery": {"enabled": false}
-    }
-  }'
-```
-
-For infrastructure that closes silent connections, the SSE endpoint emits a
-heartbeat every 15 seconds and eventually a `result` event:
+Build and publish with BuildKit; the image fetches the pinned Wake queue packages:
 
 ```bash
-curl --no-buffer -X POST http://localhost:8080/v1/segment/stream \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "request_id": "job-001",
-    "video_uri": "file:///data/input.mp4",
-    "output_uri": "file:///data/output"
-  }'
+IMAGE=registry.example/wake-hands-gpu TAG=debug-$(git rev-parse --short HEAD) \
+  ./scripts/build-and-push.sh
 ```
-
-Health endpoints are available at `/health/live` and `/health/ready`; the
-universal result contract is available at `/v1/schema`. Transient I/O and
-inference failures are retried three times with exponential backoff; individual
-request failures do not stop the persistent request consumer. Permanent input
-errors are rejected without pointless retries. The last 256 completed inference
-IDs are cached: an identical retry returns the original result (or required
-delivery failure) without another GPU pass, while conflicting reuse of an ID is
-rejected.
 
 For service chaining, enable `config.delivery` and provide the next service
 URL. Full-document and shared-file reference modes, authentication headers,
@@ -307,9 +279,17 @@ documented in
 
 ## Docker GPU service
 
-The production image is Linux/x86-64 and uses the CUDA 12.1 dependencies
-selected by `uv.lock`. It embeds the CaRe-Ego inference checkpoint and
-CascadePSP checkpoint, so it needs no configuration or weight mount.
+The production image is Linux/x86-64 and bundles PyTorch 2.7.1 with CUDA 12.8,
+which supports the RTX PRO 6000 Blackwell GPU. It embeds the CaRe-Ego
+inference checkpoint and CascadePSP checkpoint, so it needs no configuration
+or weight mount.
+
+`GPU_TORCH_MODE=bundled` is the default and starts the image's pinned runtime.
+`GPU_TORCH_MODE=download` is an emergency/debug fallback: it creates an
+isolated virtualenv under `/tmp/wake-torch-cu128`, downloads the same pinned
+CUDA 12.8 wheels, and then starts the same `care_ego.queue_runner` module.
+The fallback needs outbound package access and several GiB of ephemeral disk;
+it is not intended for normal KEDA jobs.
 
 ```bash
 docker build --platform linux/amd64 \

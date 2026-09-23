@@ -8,12 +8,10 @@ version = "0.1.0"
 description = "Contact-aware egocentric hand-object segmentation"
 readme = "README.md"
 license = { file = "LICENSE.txt" }
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.12,<3.13"
 authors = [{ name = "Yuejiao Su" }, { name = "Yi Wang" }, { name = "Lap-Pui Chau" }]
 dependencies = [
   "einops==0.8.1",
-  "flask>=3.1,<4",
-  "gunicorn>=23,<24",
   "mmcv-lite==2.0.0",
   "mmengine==0.7.3",
   "mmsegmentation==1.0.0",
@@ -26,9 +24,11 @@ dependencies = [
   "segmentation-refinement==0.6",
   "shapely==2.1.2",
   "timm==0.4.5",
-  "torch==2.2.2",
-  "torchvision==0.17.2",
+  "torch==2.7.1+cu128",
+  "torchvision==0.22.1+cu128",
   "typing-extensions>=4.6",
+  "wake-job-queue[http] @ git+https://github.com/wake-inc/wake_app.git@83690cc11270ee60bd8d8474508abb278c5d268d#subdirectory=packages/job-queue-py",
+  "wake-storage @ git+https://github.com/wake-inc/wake_app.git@83690cc11270ee60bd8d8474508abb278c5d268d#subdirectory=packages/storage-py",
 ]
 
 [project.urls]
@@ -39,8 +39,20 @@ Paper = "https://arxiv.org/abs/2407.05576"
 [tool.hatch.build.targets.wheel]
 packages = ["care_ego"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.uv]
 package = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
 
 [dependency-groups]
 dev = [
@@ -50,7 +62,7 @@ dev = [
 ]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 100
 extend-exclude = [
   "care_ego/config.py",

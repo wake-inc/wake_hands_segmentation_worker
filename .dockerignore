@@ -6,6 +6,8 @@
 !uv.lock
 !README.md
 !LICENSE.txt
+!scripts/
+!scripts/run-worker
 !gunicorn.conf.py
 !care_ego/
 !care_ego/**
