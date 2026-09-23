@@ -57,8 +57,13 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=cache,id=uv-cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=cache,id=uv-venv-${TARGETARCH}-${VENV_CACHE_REVISION},target=/staged-venv,sharing=locked \
     --mount=type=cache,id=uv-tmp-${TARGETARCH},target=/tmp/uv-tmp,sharing=locked \
-    TMPDIR=/tmp/uv-tmp \
-    UV_PROJECT_ENVIRONMENT=/staged-venv \
+    --mount=type=secret,id=github_token,required=false \
+    if [ -f /run/secrets/github_token ]; then \
+        export GIT_CONFIG_COUNT=1; \
+        export GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/github_token)@github.com/.insteadOf"; \
+        export GIT_CONFIG_VALUE_0=https://github.com/; \
+    fi; \
+    TMPDIR=/tmp/uv-tmp UV_PROJECT_ENVIRONMENT=/staged-venv \
     uv sync --frozen --no-dev --no-install-project
 
 COPY README.md LICENSE.txt ./
@@ -67,8 +72,13 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=cache,id=uv-cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=cache,id=uv-venv-${TARGETARCH}-${VENV_CACHE_REVISION},target=/staged-venv,sharing=locked \
     --mount=type=cache,id=uv-tmp-${TARGETARCH},target=/tmp/uv-tmp,sharing=locked \
-    TMPDIR=/tmp/uv-tmp \
-    UV_PROJECT_ENVIRONMENT=/staged-venv \
+    --mount=type=secret,id=github_token,required=false \
+    if [ -f /run/secrets/github_token ]; then \
+        export GIT_CONFIG_COUNT=1; \
+        export GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/github_token)@github.com/.insteadOf"; \
+        export GIT_CONFIG_VALUE_0=https://github.com/; \
+    fi; \
+    TMPDIR=/tmp/uv-tmp UV_PROJECT_ENVIRONMENT=/staged-venv \
     uv sync --frozen --no-dev --no-editable \
     && uv venv --relocatable --allow-existing /staged-venv \
     && TMPDIR=/tmp/uv-tmp UV_PROJECT_ENVIRONMENT=/staged-venv \
@@ -93,11 +103,11 @@ RUN --mount=type=cache,id=uv-venv-${TARGETARCH}-${VENV_CACHE_REVISION},target=/s
     && rm /venv-ready
 
 WORKDIR /app
+COPY --chmod=0555 scripts/run-worker ./scripts/run-worker
 COPY --chown=10001:10001 --chmod=0444 weights/care_ego_best_miou_weights.pth ./weights/care_ego_best_miou_weights.pth
 COPY --chown=10001:10001 --chmod=0444 weights/cascadepsp_v1_0.pth ./weights/cascadepsp_v1_0.pth
 RUN chmod 0555 ./weights
 
 USER 10001:10001
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["python", "-m", "care_ego.queue_runner"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/scripts/run-worker"]

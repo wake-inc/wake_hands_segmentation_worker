@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import pickle
 from collections.abc import Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -46,7 +47,15 @@ def choose_device(requested: str = "auto") -> torch.device:
 
 def extract_state_dict(checkpoint: str | Path) -> Mapping[str, torch.Tensor]:
     """Read either an MMEngine checkpoint or a raw/model state dictionary."""
-    raw = torch.load(str(checkpoint), map_location="cpu", mmap=True, weights_only=True)
+    try:
+        raw = torch.load(str(checkpoint), map_location="cpu", mmap=True, weights_only=True)
+    except RuntimeError as error:
+        if "mmap can only be used with files saved with" not in str(error):
+            raise
+        try:
+            raw = torch.load(str(checkpoint), map_location="cpu", mmap=False, weights_only=True)
+        except pickle.UnpicklingError:
+            raw = torch.load(str(checkpoint), map_location="cpu", mmap=False, weights_only=False)
     if not isinstance(raw, Mapping):
         raise TypeError(f"Checkpoint root must be a mapping, got {type(raw).__name__}")
     state = raw.get("state_dict", raw.get("model", raw))

@@ -72,6 +72,8 @@ artifact.
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
 | `WAKE_RUNNER_MODE` | `queue` | `queue` or local `http` transport. |
+| `GPU_TORCH_MODE` | `bundled` | `bundled` CUDA 12.8 runtime, or `download` emergency/debug fallback. |
+| `GPU_TORCH_DOWNLOAD_DIR` | `/tmp/wake-torch-cu128` | Isolated runtime path used only by `GPU_TORCH_MODE=download`. |
 | `RUNNER_IDLE_EXIT_S` | queue deployment value | Exit when idle in either mode. |
 | `WAKE_CHECKPOINT_PATH` | bundled weight | CaRe-Ego checkpoint. |
 | `WAKE_DEVICE` | `auto` | Torch device selection. |
@@ -85,7 +87,7 @@ artifact.
 
 ## Container build
 
-The image uses Python 3.12 and CUDA-enabled PyTorch 2.7.1. It downloads the
+The image uses Python 3.12 and CUDA 12.8-enabled PyTorch 2.7.1. It downloads the
 version-pinned generic queue packages from the Wake app repository during the
 locked Docker build, so build with SSH forwarding:
 

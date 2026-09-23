@@ -279,9 +279,17 @@ documented in
 
 ## Docker GPU service
 
-The production image is Linux/x86-64 and uses the CUDA 12.1 dependencies
-selected by `uv.lock`. It embeds the CaRe-Ego inference checkpoint and
-CascadePSP checkpoint, so it needs no configuration or weight mount.
+The production image is Linux/x86-64 and bundles PyTorch 2.7.1 with CUDA 12.8,
+which supports the RTX PRO 6000 Blackwell GPU. It embeds the CaRe-Ego
+inference checkpoint and CascadePSP checkpoint, so it needs no configuration
+or weight mount.
+
+`GPU_TORCH_MODE=bundled` is the default and starts the image's pinned runtime.
+`GPU_TORCH_MODE=download` is an emergency/debug fallback: it creates an
+isolated virtualenv under `/tmp/wake-torch-cu128`, downloads the same pinned
+CUDA 12.8 wheels, and then starts the same `care_ego.queue_runner` module.
+The fallback needs outbound package access and several GiB of ephemeral disk;
+it is not intended for normal KEDA jobs.
 
 ```bash
 docker build --platform linux/amd64 \
